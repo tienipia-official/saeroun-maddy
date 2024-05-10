@@ -22,8 +22,6 @@ workflows:
   build_and_deploy:
     jobs:
       - build:
-          requires:
-            - build
           context: gh-tienipia-cci
           filters:
             branches:
