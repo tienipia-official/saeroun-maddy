@@ -305,6 +305,9 @@ func (s *state) RewriteBody(ctx context.Context, h *textproto.Header, body buffe
 	}
 	keySigner := s.m.signers[normDomain]
 	if keySigner == nil {
+		keySigner = s.m.signers["default"]
+	}
+	if keySigner == nil {
 		s.log.Msg("no key for domain", "domain", normDomain)
 		return nil
 	}
