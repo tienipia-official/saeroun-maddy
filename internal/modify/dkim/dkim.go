@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"path/filepath"
 	"runtime/trace"
 	"strings"
@@ -109,6 +110,9 @@ type Modifier struct {
 	signSubdomains bool
 
 	log log.Logger
+
+	rollout    bool
+	rolloutCnt int
 }
 
 func New(_, instName string, _, inlineArgs []string) (module.Module, error) {
@@ -165,12 +169,14 @@ func (m *Modifier) Init(cfg *config.Map) error {
 		[]string{"rsa4096", "rsa2048", "ed25519"}, "rsa2048", &newKeyAlgo)
 	cfg.Bool("allow_multiple_from", false, false, &m.multipleFromOk)
 	cfg.Bool("sign_subdomains", false, false, &m.signSubdomains)
+	cfg.Bool("rollout", false, false, &m.rollout)
+	cfg.Int("rollout_count", false, false, 3, &m.rolloutCnt)
 
 	if _, err := cfg.Process(); err != nil {
 		return err
 	}
 
-	if len(m.domains) == 0 {
+	if len(m.domains) == 0 && !m.rollout {
 		return errors.New("sign_domain: at least one domain is needed")
 	}
 	if m.selector == "" {
@@ -184,7 +190,6 @@ func (m *Modifier) Init(cfg *config.Map) error {
 	if m.hash == 0 {
 		panic("modify.dkim.Init: Hash function allowed by config matcher but not present in hashFuncs")
 	}
-
 	for _, domain := range m.domains {
 		if _, err := idna.ToASCII(domain); err != nil {
 			m.log.Printf("warning: unable to convert domain %s to A-labels form, non-EAI messages will not be signed: %v", domain, err)
@@ -213,6 +218,19 @@ func (m *Modifier) Init(cfg *config.Map) error {
 			return fmt.Errorf("sign_skim: unable to normalize domain %s: %w", domain, err)
 		}
 		m.signers[normDomain] = signer
+	}
+
+	if m.rollout {
+		// for-loop for rollout_count
+		for i := 1; i <= m.rolloutCnt; i++ {
+			// {rollout_key}_{i}
+			rolloutKey := fmt.Sprintf("rollout_%s%d", m.selector, i)
+			signer, _, err := m.loadOrGenerateKey(rolloutKey+".key", newKeyAlgo)
+			if err != nil {
+				continue
+			}
+			m.signers[rolloutKey] = signer
+		}
 	}
 
 	return nil
@@ -304,26 +322,35 @@ func (s *state) RewriteBody(ctx context.Context, h *textproto.Header, body buffe
 		return nil
 	}
 	keySigner := s.m.signers[normDomain]
+	rolloutNum := rand.Intn(s.m.rolloutCnt) + 1
 	if keySigner == nil {
-		keySigner = s.m.signers["default"]
+		if s.m.rollout {
+			// random number between 0 and rolloutCnt
+			rolloutKey := fmt.Sprintf("rollout_%s%d", s.m.selector, rolloutNum)
+			keySigner = s.m.signers[rolloutKey]
+		}
 	}
 	if keySigner == nil {
 		s.log.Msg("no key for domain", "domain", normDomain)
 		return nil
 	}
 
-	// If the message is non-EAI, we are not allowed to use domains in U-labels,
-	// attempt to convert.
-	if !s.meta.SMTPOpts.UTF8 {
-		var err error
-		domain, err = idna.ToASCII(domain)
-		if err != nil {
-			return nil
-		}
+	if s.m.rollout {
+		selector = fmt.Sprintf("%s%d", s.m.selector, rolloutNum)
+	} else {
+		// If the message is non-EAI, we are not allowed to use domains in U-labels,
+		// attempt to convert.
+		if !s.meta.SMTPOpts.UTF8 {
+			var err error
+			domain, err = idna.ToASCII(domain)
+			if err != nil {
+				return nil
+			}
 
-		selector, err = idna.ToASCII(selector)
-		if err != nil {
-			return nil
+			selector, err = idna.ToASCII(selector)
+			if err != nil {
+				return nil
+			}
 		}
 	}
 
