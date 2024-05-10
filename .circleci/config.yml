@@ -1,0 +1,30 @@
+version: 2.1
+
+jobs:
+  build:
+    docker:
+      - image: cimg/base:2024.01
+    steps:
+      - attach_workspace:
+          at: .
+      - setup_remote_docker:
+          docker_layer_caching: false
+      - run:
+          name: Docker Build & Publish
+          command: |
+            echo $CR_PAT | docker login ghcr.io -u tienipia --password-stdin
+            docker context create buildx-build
+            docker buildx create --use buildx-build
+            docker buildx inspect --bootstrap
+            docker buildx build --platform linux/amd64,linux/arm64 --push -t ghcr.io/tienipia-official/saeroun-maddy:latest .
+
+workflows:
+  build_and_deploy:
+    jobs:
+      - build:
+          requires:
+            - build
+          context: gh-tienipia-cci
+          filters:
+            branches:
+              only: main
