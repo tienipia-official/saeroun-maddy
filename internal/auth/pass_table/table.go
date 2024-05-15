@@ -91,6 +91,12 @@ func (a *Auth) AuthPlain(username, password string) error {
 	if len(parts) != 2 {
 		return fmt.Errorf("%s: auth plain %s: no hash tag", a.modName, key)
 	}
+	if parts[0] == "plain" {
+		if parts[1] != password {
+			return fmt.Errorf("%s: auth plain %s: password mismatch", a.modName, key)
+		}
+		return nil
+	}
 	hashVerify := HashVerify[parts[0]]
 	if hashVerify == nil {
 		return fmt.Errorf("%s: auth plain %s: unknown hash: %s", a.modName, key, parts[0])
