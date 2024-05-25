@@ -7,6 +7,7 @@ RUN set -ex && \
 WORKDIR /maddy
 
 COPY go.mod go.sum ./
+COPY go-imap-sql ./
 RUN go mod download
 
 COPY . ./
